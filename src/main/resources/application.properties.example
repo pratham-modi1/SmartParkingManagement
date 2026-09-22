@@ -1,0 +1,8 @@
+# Database Configuration
+db.url=jdbc:mysql://localhost:3306/smart_parking_db
+db.username=parking_app
+db.password=your_password
+db.pool.size=10
+
+jwt.secret=CHANGE_ME
+jwt.expiryMinutes=60

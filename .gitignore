@@ -21,4 +21,7 @@ target/
 Thumbs.db
 
 # Secrets
-src/main/resources/config.properties
+src/main/resources/application.properties
+
+# Logs
+*.log
