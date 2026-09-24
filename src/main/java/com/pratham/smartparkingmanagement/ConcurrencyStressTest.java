@@ -2,6 +2,8 @@ package com.pratham.smartparkingmanagement;
 
 import com.pratham.smartparkingmanagement.dao.*;
 import com.pratham.smartparkingmanagement.model.entities.Ticket;
+import com.pratham.smartparkingmanagement.model.entities.Vehicle;
+import com.pratham.smartparkingmanagement.model.enums.TicketStatus;
 import com.pratham.smartparkingmanagement.model.enums.VehicleType;
 import com.pratham.smartparkingmanagement.service.ParkingEntryService;
 
@@ -18,118 +20,134 @@ public class ConcurrencyStressTest {
         TicketDao ticketDao = new TicketDaoImpl();
 
         ParkingEntryService entryService =
-                new ParkingEntryService(
-                        vehicleDao,
-                        slotDao,
-                        ticketDao
-                );
+                new ParkingEntryService(vehicleDao, slotDao, ticketDao);
 
-        int numberOfRequests = 20;
+        int requests = 5;
+
+        // SHORT + UNIQUE plate
+        String plate = "R" + (System.currentTimeMillis() % 100000000);
+
+        // Create vehicle ONCE
+        Vehicle vehicle = new Vehicle(
+                0,
+                plate,
+                VehicleType.FOUR_WHEELER,
+                null
+        );
+
+        vehicleDao.create(vehicle);
+
+        System.out.println("================================");
+        System.out.println(" SAME VEHICLE CONCURRENCY TEST");
+        System.out.println("================================");
+        System.out.println("Plate: " + plate);
+        System.out.println("Vehicle ID: " + vehicle.getVehicleId());
+        System.out.println("Requests: " + requests);
+        System.out.println();
 
         ExecutorService executor =
-                Executors.newFixedThreadPool(numberOfRequests);
+                Executors.newFixedThreadPool(requests);
 
         CountDownLatch ready =
-                new CountDownLatch(numberOfRequests);
+                new CountDownLatch(requests);
 
         CountDownLatch start =
                 new CountDownLatch(1);
 
-        List<Future<Ticket>> results =
-                new ArrayList<>();
+        List<Future<Ticket>> results = new ArrayList<>();
 
-        System.out.println("========================================");
-        System.out.println("       CONCURRENCY STRESS TEST");
-        System.out.println("========================================");
+        for (int i = 0; i < requests; i++) {
 
-        System.out.println(
-                numberOfRequests + " requests ready..."
-        );
+            results.add(executor.submit(() -> {
 
-        for (int i = 0; i < numberOfRequests; i++) {
+                ready.countDown();
 
-            final int requestNumber = i;
+                start.await();
 
-            results.add(
-                    executor.submit(() -> {
-
-                        ready.countDown();
-
-                        // Wait until every thread is ready
-                        start.await();
-
-                        String plate =
-                                "CONCURRENCY" + requestNumber;
-
-                        return entryService.parkVehicle(
-                                plate,
-                                VehicleType.FOUR_WHEELER,
-                                2,
-                                1
-                        );
-                    })
-            );
+                return entryService.parkVehicle(
+                        plate,
+                        VehicleType.FOUR_WHEELER,
+                        2,
+                        1
+                );
+            }));
         }
 
-        // Make sure all threads have reached the starting point
         ready.await();
 
-        System.out.println("Starting concurrency test...");
-
-        // Release all threads at approximately the same time
+        System.out.println("Starting concurrent requests...");
         start.countDown();
 
         int success = 0;
-        int fail = 0;
+        int failed = 0;
 
         for (int i = 0; i < results.size(); i++) {
 
             try {
 
-                Future<Ticket> future = results.get(i);
-
                 Ticket ticket =
-                        future.get(10, TimeUnit.SECONDS);
+                        results.get(i).get(15, TimeUnit.SECONDS);
 
                 success++;
 
                 System.out.println(
                         "Request " + i +
-                        " SUCCESS - Ticket " +
+                        " SUCCESS | Ticket=" +
                         ticket.getTicketId() +
-                        " - Slot " +
+                        " | Slot=" +
                         ticket.getSlotId()
                 );
 
             } catch (Exception e) {
 
-                fail++;
+                failed++;
+
+                Throwable cause = e;
+
+                while (cause.getCause() != null) {
+                    cause = cause.getCause();
+                }
 
                 System.out.println(
                         "Request " + i +
-                        " FAILED"
+                        " FAILED | " +
+                        cause.getMessage()
                 );
             }
         }
 
         executor.shutdown();
 
-        executor.awaitTermination(
-                10,
-                TimeUnit.SECONDS
-        );
+        // Check database
+        List<Ticket> tickets =
+                ticketDao.findByVehicleId(
+                        vehicle.getVehicleId()
+                );
+
+        int activeTickets = 0;
+
+        for (Ticket ticket : tickets) {
+            if (ticket.getStatus() == TicketStatus.ACTIVE) {
+                activeTickets++;
+            }
+        }
 
         System.out.println();
         System.out.println("========== RESULT ==========");
+        System.out.println("Success        : " + success);
+        System.out.println("Failed         : " + failed);
+        System.out.println("Total tickets  : " + tickets.size());
+        System.out.println("Active tickets : " + activeTickets);
+        System.out.println("============================");
 
-        System.out.println("Success: " + success);
-        System.out.println("Fail:    " + fail);
-
-        System.out.println("=============================");
-
-        System.out.println();
-        System.out.println(
-                "Concurrency test completed."
-        );
+        if (success == 1 && activeTickets == 1) {
+            System.out.println(
+                    "PASS: Only ONE active ticket was created."
+            );
+        } else {
+            System.out.println(
+                    "FAIL: Duplicate active tickets detected."
+            );
+        }
     }
 }
